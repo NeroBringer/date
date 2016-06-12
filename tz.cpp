@@ -73,8 +73,8 @@
 #if HAS_REMOTE_API
 #include <ShlObj.h> // CoTaskFree, ShGetKnownFolderPath etc.
 #include <Shellapi.h> // ShFileOperation etc.
-#endif
-#else
+#endif  // HAS_REMOTE_API
+#else   // !_WIN32
 #include <unistd.h>
 #include <wordexp.h>
 #endif
@@ -96,173 +96,82 @@ namespace date
 // | Begin Configuration |
 // +---------------------+
 
-// Until filesystem arrives.
-#ifdef _WIN32
-    static CONSTDATA char folder_delimiter = '\\';
-#else
-    static CONSTDATA char folder_delimiter = '/';
-#endif
-
-    namespace
-    {
-#if HAS_REMOTE_API
-        using curl_write_callback = std::size_t(*)(char* contents, std::size_t size, std::size_t nmemb, void* userp);
-        enum class download_file_options { binary, text };
-#endif
-#if _WIN32
-        struct task_mem_deleter
-        {
-            void operator()(wchar_t buf[])
-            {
-                if (buf != nullptr)
-                    CoTaskMemFree(buf);
-            }
-        };
-        using co_task_mem_ptr = std::unique_ptr<wchar_t[], task_mem_deleter>;
-#endif
-    }
-
 #if _WIN32
 
-    // We might need to know certain locations even if not using the remote API,
-    // so keep these routines out of that block for now.
-    static std::string get_known_folder(const GUID& folderid)
-    {
-        std::string folder;
-        PWSTR pfolder = nullptr;
-        HRESULT hr = SHGetKnownFolderPath(folderid, KF_FLAG_DEFAULT, NULL, &pfolder);
-        if (SUCCEEDED(hr))
-        {
-            co_task_mem_ptr folder_ptr(pfolder);
-            folder = std::string(folder_ptr.get(), folder_ptr.get() + wcslen(folder_ptr.get()));
-        }
-        return folder;
-    }
+static CONSTDATA char folder_delimiter = '\\';
 
-    static std::string get_program_folder()
-    {
-        return get_known_folder(FOLDERID_ProgramFiles);
-    }
-#endif
-
-#if HAS_REMOTE_API
-
-#if _WIN32
-
-    static std::string get_download_folder()
-    {
-        return get_known_folder(FOLDERID_Downloads);
-    }
-
-    // Note folder can and usually does contain spaces.
-    // Note assume's 7 zip is in the default installation location.
-    // TODO! consider more certain means of finding it such as looking in the registry.
-    static std::string get_unzip_program()
-    {
-        std::string path;
-        path += get_program_folder();
-        path += folder_delimiter;
-        path += "7-Zip\\7z.exe";
-        return path;
-    }
-
-#if TIMEZONE_MAPPING
-    static std::vector<date::detail::timezone_mapping> load_zone_mappings_from_xml_file(const std::string& input_path)
-    {
-        using tinyxml2::XMLDocument;
-        std::vector<date::detail::timezone_mapping> zone_map_list;
-        XMLDocument doc;
-        doc.LoadFile(input_path.c_str());
-        auto supplementalData = doc.FirstChildElement("supplementalData");
-        auto windowsZones = supplementalData->FirstChildElement("windowsZones");
-        auto mapTimeZones = windowsZones->FirstChildElement("mapTimezones");
-
-        for (auto mapZone = mapTimeZones->FirstChildElement("mapZone");
-            mapZone != nullptr; mapZone = mapZone->NextSiblingElement())
-        {
-            auto other = mapZone->Attribute("other");
-            auto territory = mapZone->Attribute("territory");
-            auto type = mapZone->Attribute("type");
-            zone_map_list.emplace_back(other, territory, type);
-        }
-        return zone_map_list;
-    }
-
-    static void sort_zone_mappings(std::vector<date::detail::timezone_mapping>& mappings)
-    {
-        std::sort(mappings.begin(), mappings.end(),
-            [](const auto& lhs, const auto& rhs)->bool
-        {
-            auto other_result = lhs.other.compare(rhs.other);
-            if (other_result < 0)
-                return true;
-            else if (other_result == 0)
-            {
-                auto territory_result = lhs.territory.compare(rhs.territory);
-                if (territory_result < 0)
-                    return true;
-                else if (territory_result == 9)
-                {
-                    if (lhs.type < rhs.type)
-                        return true;
-                }
-            }
-            return false;
-        });
-    }
-#endif
-
-#else  // !_WIN32
-    static
-        std::string
-        expand_path(std::string path)
-    {
-        ::wordexp_t w{};
-        ::wordexp(path.c_str(), &w, 0);
-        assert(w.we_wordc == 1);
-        path = w.we_wordv[0];
-        ::wordfree(&w);
-        return path;
-    }
-#endif  // !_WIN32
-
-static std::string get_install()
+// We might need to know certain locations even if not using the remote API,
+// so keep these routines out of that block for now.
+static
+std::string
+get_known_folder(const GUID& folderid)
 {
-#if _WIN32
+    struct task_mem_deleter
+    {
+        void operator()(wchar_t buf[])
+        {
+            if (buf != nullptr)
+                CoTaskMemFree(buf);
+        }
+    };
+
+    using co_task_mem_ptr = std::unique_ptr<wchar_t[], task_mem_deleter>;
+    std::string folder;
+    PWSTR pfolder = nullptr;
+    HRESULT hr = SHGetKnownFolderPath(folderid, KF_FLAG_DEFAULT, nullptr, &pfolder);
+    if (SUCCEEDED(hr))
+    {
+        co_task_mem_ptr folder_ptr(pfolder);
+        folder = std::string(folder_ptr.get(),
+                             folder_ptr.get() + wcslen(folder_ptr.get()));
+    }
+    return folder;
+}
+
+static
+std::string
+get_download_folder()
+{
+    return get_known_folder(FOLDERID_Downloads);
+}
+
+static
+std::string
+get_install()
+{
     std::string install = get_download_folder();
     install += folder_delimiter;
     install += "tzdata";
-#else
-    std::string install = expand_path("~/Downloads/tzdata");
-#endif
     return install;
 }
 
+#else  // !_WIN32
+
+static CONSTDATA char folder_delimiter = '/';
+
+static
+std::string
+expand_path(std::string path)
+{
+    ::wordexp_t w{};
+    ::wordexp(path.c_str(), &w, 0);
+    assert(w.we_wordc == 1);
+    path = w.we_wordv[0];
+    ::wordfree(&w);
+    return path;
+}
+
+static
+inline
+std::string
+get_install()
+{
+    return expand_path("~/Downloads/tzdata");
+}
+
+#endif  // !_WIN32
+
 static const std::string install = get_install();
-
-static std::string get_download_gz_file(const std::string& version)
-{
-    auto file = install + version + ".tar.gz";
-    return file;
-}
-
-static std::string get_download_tar_file(const std::string& version)
-{
-    auto file = install;
-    file += folder_delimiter;
-    file += "tzdata";
-    file += version;
-    file += ".tar";
-    return file;
-}
-
-#if TIMEZONE_MAPPING
-static std::string get_download_mapping_file(const std::string& version)
-{
-    auto file = install + version + "windowsZones.xml";
-    return file;
-}
-#endif
 
 static const std::vector<std::string> files =
 {
@@ -298,244 +207,6 @@ static bool file_exists(const std::string& filename)
     return ::access(filename.c_str(), F_OK) == 0;
 #endif
 }
-
-#ifdef _WIN32
-// This routine maps Win32 OS error codes to readable text strngs.
-static std::string get_win32_message(DWORD error_code)
-{
-    struct free_message {
-        void operator()(char buf[]) {
-            if (buf != nullptr)
-            {
-                auto result = HeapFree(GetProcessHeap(), 0, buf);
-                assert(result != 0);
-            }
-        }
-    };
-    char* msg = nullptr;
-    auto result = FormatMessageA(
-        FORMAT_MESSAGE_ALLOCATE_BUFFER | FORMAT_MESSAGE_FROM_SYSTEM
-                                       | FORMAT_MESSAGE_IGNORE_INSERTS,
-        nullptr, error_code, MAKELANGID(LANG_NEUTRAL, SUBLANG_DEFAULT),
-        reinterpret_cast<char*>(&msg), 0, nullptr );
-    std::unique_ptr<char[], free_message> message_buffer(msg);
-    if (result == 0) // If there is no error message, still give the code.
-    {
-        std::string err = "Error getting message for error number ";
-        err += std::to_string(error_code);
-        return err;
-    }
-    assert(message_buffer.get() != nullptr);
-    return std::string(message_buffer.get());
-}
-#endif  // _WIN32
-
-#if TIMEZONE_MAPPING
-
-namespace // Put types in an anonymous name space.
-{
-    // A simple type to manage RAII for key handles and to
-    // implement the trivial registry interface we need.
-    // Not intended to be general-purpose.
-    class reg_key
-    {
-    private:
-        // Note there is no value documented to be an invalid handle value.
-        // Not NULL nor INVALID_HANDLE_VALUE. We must rely on is_open.
-        HKEY m_key = nullptr;
-        bool m_is_open = false;
-    public:
-        HKEY handle()
-        {
-            return m_key;
-        }
-        bool is_open() const
-        {
-            return m_is_open;
-        }
-        LONG open(const wchar_t* key_name)
-        {
-            LONG result;
-            result = RegOpenKeyExW(HKEY_LOCAL_MACHINE, key_name, 0, KEY_READ, &m_key);
-            if (result == ERROR_SUCCESS)
-                m_is_open = true;
-            return result;
-        }
-        LONG close()
-        {
-            if (m_is_open)
-            {
-                auto result = RegCloseKey(m_key);
-                assert(result == ERROR_SUCCESS);
-                if (result == ERROR_SUCCESS)
-                {
-                    m_is_open = false;
-                    m_key = nullptr;
-                }
-                return result;
-            }
-            return ERROR_SUCCESS;
-        }
-
-        // WARNING: this function is not a general-purpose function.
-        // It has a hard-coded value size limit that should be sufficient for our use cases.
-        bool get_string(const wchar_t* key_name, std::string& value)
-        {
-            value.clear();
-            wchar_t value_buffer[256];
-            // in/out parameter. Documentation say that size is a count of bytes not chars.
-            DWORD size = sizeof(value_buffer) - sizeof(value_buffer[0]);
-            DWORD tzi_type = REG_SZ;
-            if (RegQueryValueExW(handle(), key_name, nullptr, &tzi_type,
-                reinterpret_cast<LPBYTE>(value_buffer), &size) == ERROR_SUCCESS)
-            {
-                // Function does not guarantee to null terminate.
-                value_buffer[size/sizeof(value_buffer[0])] = L'\0';
-                std::wstring_convert<std::codecvt_utf8_utf16<wchar_t>> converter;
-                value = converter.to_bytes(value_buffer);
-                return true;
-            }
-            return false;
-        }
-
-        bool get_binary(const wchar_t* key_name, void* value, int value_size)
-        {
-            DWORD size = value_size;
-            DWORD type = REG_BINARY;
-            if (RegQueryValueExW(handle(), key_name, nullptr, &type,
-                reinterpret_cast<LPBYTE>(value), &size) == ERROR_SUCCESS
-                && (int) size == value_size)
-                return true;
-            return false;
-        }
-
-        ~reg_key()
-        {
-            close();
-        }
-    };
-} // anonymous namespace
-
-// This function returns an exhaustive list of time zone information
-// from the Windows registry.
-// The routine tries to load as many time zone entries as possible despite errors.
-// We don't want to fail to load the whole database just because one record can't be read.
-
-static void get_windows_timezone_info(std::vector<detail::timezone_info>& tz_list)
-{
-    tz_list.clear();
-    LONG result;
-
-    // Open the parent time zone key that has the list of timezones in.
-    reg_key zones_key;
-    static const wchar_t zones_key_name[] =
-    { L"SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion\\Time Zones" };
-    result = zones_key.open(zones_key_name);
-    // TODO! Review if this should happen here or be signalled later.
-    // We don't want the process to fail on startup because of this.
-    if (result != ERROR_SUCCESS)
-        throw std::runtime_error("Time Zone registry key could not be opened: "
-        + get_win32_message(result));
-
-    DWORD size;
-    wchar_t zone_key_name[256];
-    std::wstring value;
-
-    // Iterate through the list of keys of the parent time zones key to get
-    // each key that identifies each individual timezone.
-    std::wstring full_zone_key_name;
-    for (DWORD zone_index = 0; ; ++zone_index)
-    {
-        detail::timezone_info tz;
-
-        size = (DWORD) sizeof(zone_key_name)/sizeof(zone_key_name[0]);
-        auto status = RegEnumKeyExW(zones_key.handle(), zone_index, zone_key_name, &size,
-            nullptr, nullptr, nullptr, nullptr);
-        if (status != ERROR_SUCCESS && status != ERROR_NO_MORE_ITEMS)
-            throw std::runtime_error("Can't enumerate time zone registry key"
-            + get_win32_message(status));
-        if (status == ERROR_NO_MORE_ITEMS)
-            break;
-        std::wstring_convert<std::codecvt_utf8_utf16<wchar_t>> converter;
-        tz.timezone_id = converter.to_bytes(zone_key_name);
-
-        full_zone_key_name = zones_key_name;
-        full_zone_key_name += L'\\';
-        full_zone_key_name += zone_key_name;
-
-        // If any field fails to be found, consider the whole time zone
-        // entry corrupt and move onto the next. See comments
-        // at the top of function.
-
-        reg_key zone_key;
-        if (zone_key.open(full_zone_key_name.c_str()) != ERROR_SUCCESS)
-            continue;
-
-        if (!zone_key.get_string(L"Std", tz.standard_name))
-            continue;
-
-#if 0
-        // TBD these fields are not required yet.
-        // They might be useful for test cases though.
-        if (!zone_key.get_string("Display", tz.display_name))
-            continue;
-
-        if (!zone_key.get_binary("TZI", &tz.tzi, sizeof(TZI)))
-            continue;
-#endif
-        zone_key.close();
-
-        tz_list.push_back(std::move(tz));
-    }
-    result = zones_key.close();
-}
-
-// standard_name is the StandardName field from the Windows
-// TIME_ZONE_INFORMATION structure.
-// See the Windows API function GetTimeZoneInformation.
-// The standard_name is also the value from STD field of
-// under the windows registry key Time Zones.
-// To be clear, standard_name does NOT represent a windows timezone id
-// or an IANA tzid
-static const detail::timezone_info*
-find_native_timezone_by_standard_name(
-    const std::string& standard_name)
-{
-    // TODO! we can improve on linear search.
-    const auto& native_zones = get_tzdb().native_zones;
-    for (const auto& tz : native_zones)
-    {
-        if (tz.standard_name == standard_name)
-            return &tz;
-    }
-
-    return nullptr;
-}
-
-static bool
-native_to_standard_timezone_name(const std::string& native_tz_name,
-                                 std::string& standard_tz_name)
-{
-    // TOOD! Need be a case insensitive compare?
-    if (native_tz_name == "UTC")
-    {
-        standard_tz_name = "Etc/UTC";
-        return true;
-    }
-    standard_tz_name.clear();
-    // TODO! we can improve on linear search.
-    const auto& mappings = date::get_tzdb().mappings;
-    for (const auto& tzm : mappings)
-    {
-        if (tzm.other == native_tz_name)
-        {
-            standard_tz_name = tzm.type;
-            return true;
-        }
-    }
-    return false;
-}
-#endif  // TIMEZONE_MAPPING
 
 // Parsing helpers
 
@@ -2019,7 +1690,37 @@ operator<<(std::ostream& os, const leap& x)
 
 #if HAS_REMOTE_API
 
+static
+std::string
+get_download_gz_filename(const std::string& version)
+{
+    auto file = install + version + ".tar.gz";
+    return file;
+}
+
+#if TIMEZONE_MAPPING
+
+static
+std::string
+get_download_mapping_filename(const std::string& version)
+{
+    auto file = install + version + "windowsZones.xml";
+    return file;
+}
+
+#endif  // TIMEZONE_MAPPING
+
 // CURL tools
+
+namespace
+{
+
+using curl_write_callback = std::size_t(*)(char* contents, std::size_t size,
+                                           std::size_t nmemb, void* userp);
+
+enum class download_file_options { binary, text };
+
+}  // anonymous namespace
 
 static
 int
@@ -2040,7 +1741,8 @@ curl_init()
     return std::unique_ptr<CURL, decltype(curl_delete)>{::curl_easy_init(), curl_delete};
 }
 
-static bool
+static
+bool
 download_to_string(const std::string& url, std::string& str)
 {
     str.empty();
@@ -2049,7 +1751,8 @@ download_to_string(const std::string& url, std::string& str)
         return false;
     std::string version;
     curl_easy_setopt(curl.get(), CURLOPT_URL, url.c_str());
-    curl_write_callback write_cb = [](char* contents, std::size_t size, std::size_t nmemb, void* userp)
+    curl_write_callback write_cb = [](char* contents, std::size_t size, std::size_t nmemb,
+                                      void* userp)
         -> std::size_t
     {
         auto& str = *static_cast<std::string*>(userp);
@@ -2063,30 +1766,31 @@ download_to_string(const std::string& url, std::string& str)
     return (res == CURLE_OK);
 }
 
-static bool
-download_to_file(const std::string& url, const std::string& local_filename, download_file_options opts)
+static
+bool
+download_to_file(const std::string& url, const std::string& local_filename,
+                 download_file_options opts)
 {
     auto curl = curl_init();
     if (!curl)
         return false;
     curl_easy_setopt(curl.get(), CURLOPT_URL, url.c_str());
-    curl_write_callback write_cb = [](char* contents, std::size_t size, std::size_t nmemb, void* userp)
+    curl_write_callback write_cb = [](char* contents, std::size_t size, std::size_t nmemb,
+                                      void* userp)
         -> std::size_t
     {
         auto& of = *static_cast<std::ofstream*>(userp);
         auto realsize = size * nmemb;
-        // TODO! We probably should signal write failures here via the return value, but we don't know
-        // how much data was actually written to do that. Throwing is dubious as it might affect
-        // curl as it's C based. In any case other parts of the process like tar unpacking are more
-        // likely disk affected than here and they aren't caught either yet so worry about here later.
         of.write(contents, realsize);
         return realsize;
     };
     curl_easy_setopt(curl.get(), CURLOPT_WRITEFUNCTION, write_cb);
     decltype(curl_easy_perform(curl.get())) res;
     {
-        std::ofstream of(local_filename,
-            opts == download_file_options::binary ? std::ofstream::out | std::ofstream::binary : std::ofstream::out);
+        std::ofstream of(local_filename, opts == download_file_options::binary ?
+                                             std::ofstream::out | std::ofstream::binary :
+                                             std::ofstream::out);
+        of.exceptions(std::ios::badbit);
         curl_easy_setopt(curl.get(), CURLOPT_WRITEDATA, &of);
         res = curl_easy_perform(curl.get());
     }
@@ -2114,14 +1818,17 @@ bool
 remote_download(const std::string& version)
 {
     assert(!version.empty());
-    auto url = "http://www.iana.org/time-zones/repository/releases/tzdata" + version + ".tar.gz";
-    bool result = download_to_file(url, get_download_gz_file(version), download_file_options::binary);
+    auto url = "http://www.iana.org/time-zones/repository/releases/tzdata" +
+               version + ".tar.gz";
+    bool result = download_to_file(url, get_download_gz_filename(version),
+                                   download_file_options::binary);
 #if TIMEZONE_MAPPING
     if (result)
     {
-        auto mapping_file = get_download_mapping_file(version);
-        result = download_to_file("http://unicode.org/repos/cldr/trunk/common/supplemental/windowsZones.xml",
-            mapping_file, download_file_options::text);
+        auto mapping_file = get_download_mapping_filename(version);
+        result = download_to_file("http://unicode.org/repos/cldr"
+                                  "/trunk/common/supplemental/windowsZones.xml",
+                                  mapping_file, download_file_options::text);
     }
 #endif
     return result;
@@ -2134,7 +1841,8 @@ remote_download(const std::string& version)
 // But use the current means now as matches Unix implementations and while
 // in proof of concept / testing phase.
 
-static bool
+static
+bool
 remove_folder_and_subfolders(const std::string& folder)
 {
 #if _WIN32
@@ -2144,7 +1852,7 @@ remove_folder_and_subfolders(const std::string& folder)
     cmd += folder;
     cmd += '\"';
     return std::system(cmd.c_str()) == EXIT_SUCCESS;
-#else
+#else  // !USE_SHELL_API
     // Create a buffer containing the path to delete. It must be terminated
     // by two nulls. Who designs these API's...
     std::vector<char> from;
@@ -2158,15 +1866,15 @@ remove_folder_and_subfolders(const std::string& folder)
     int ret = SHFileOperation(&fo);
     if (ret == 0 && !fo.fAnyOperationsAborted)
         return true;
-#endif
     return false;
-#endif
-#else
+#endif  // !USE_SHELL_API
+#else  // !_WIN32
     return std::system(("rm -R " + folder).c_str()) == EXIT_SUCCESS;
-#endif
+#endif  // !_WIN32
 }
 
-static bool
+static
+bool
 make_directory(const std::string& folder)
 {
 #if _WIN32
@@ -2176,40 +1884,49 @@ make_directory(const std::string& folder)
     cmd += folder;
     cmd += '\"';
     return std::system(cmd.c_str()) == EXIT_SUCCESS;
-#else
+#else  // !USE_SHELL_API
     return _mkdir(folder.c_str()) == 0;
-#endif
-#else
+#endif  // !USE_SHELL_API
+#else   // !_WIN32
     return std::system(("mkdir " + folder).c_str()) == EXIT_SUCCESS;
-#endif
+#endif  // !_WIN32
 }
 
 #if _WIN32
-static DWORD run_program(const std::string& command)
+
+static
+DWORD
+run_program(const std::string& command)
 {
     STARTUPINFO si{};
     si.cb = sizeof(si);
     PROCESS_INFORMATION pi{};
 
-    std::string mutable_command(command); // Because alledgedly CreateProcess overwrites the command line. Ugh.
-    if (CreateProcess(nullptr, &mutable_command[0], nullptr, nullptr, FALSE, CREATE_NO_WINDOW, nullptr, nullptr, &si, &pi))
+    // Because alledgedly CreateProcess overwrites the command line. Ugh.
+    std::string mutable_command(command);
+    if (CreateProcess(nullptr, &mutable_command[0], nullptr, nullptr, false,
+                      CREATE_NO_WINDOW, nullptr, nullptr, &si, &pi))
     {
         WaitForSingleObject(pi.hProcess, INFINITE);
         DWORD exit_code;
         bool got_exit_code = !!GetExitCodeProcess(pi.hProcess, &exit_code);
         CloseHandle(pi.hProcess);
         CloseHandle(pi.hThread);
-        // Not 100% sure about this still active thing is correct but I'm going with it. See:
-        // I *think* WaitForSingleObject might return in some cases without INFINITE-ly waiting.
-        // But i'm not quite sure why GetExitCodeProcess wouldn't return false in that case. Anyway...
+        // Not 100% sure about this still active thing is correct but I'm going with it.
+        // See: I *think* WaitForSingleObject might return in some cases without
+        // INFINITE-ly waiting. But i'm not quite sure why GetExitCodeProcess wouldn't
+        // return false in that case. Anyway...
         if (got_exit_code && exit_code != STILL_ACTIVE)
             return exit_code;
     }
     return EXIT_FAILURE;
 }
-#endif
 
-static bool delete_file(const std::string& file)
+#endif  // _WIN32
+
+static
+bool
+delete_file(const std::string& file)
 {
 #if _WIN32
     std::string cmd = "del \"";
@@ -2221,7 +1938,11 @@ static bool delete_file(const std::string& file)
 #endif
 }
 
-static bool move_file(const std::string& from, const std::string& to)
+#if TIMEZONE_MAPPING
+
+static
+bool
+move_file(const std::string& from, const std::string& to)
 {
 #if _WIN32
 #if USE_SHELL_API
@@ -2231,19 +1952,60 @@ static bool move_file(const std::string& from, const std::string& to)
     cmd += to;
     cmd += '\"';
     return std::system(cmd.c_str()) == EXIT_SUCCESS;
-#else
+#else  // !USE_SHELL_API
     return !!::MoveFile(from.c_str(), to.c_str());
-#endif
-#else
+#endif // !USE_SHELL_API
+#else  // !_WIN32
     return std::system(("mv " + from + " " + to).c_str()) == EXIT_SUCCESS;
-#endif
+#endif // !_WIN32
 }
 
-static bool extract_gz_file(const std::string& version, const std::string& gz_file, const std::string& dest_folder)
-{
-    auto tar_file = get_download_tar_file(version);
+#endif  // TIMEZONE_MAPPING
 
 #if _WIN32
+
+static
+std::string
+get_program_folder()
+{
+    return get_known_folder(FOLDERID_ProgramFiles);
+}
+
+// Note folder can and usually does contain spaces.
+// Note assume's 7 zip is in the default installation location.
+// TODO! consider more certain means of finding it such as looking in the registry.
+static
+std::string
+get_unzip_program()
+{
+    std::string path;
+    path += get_program_folder();
+    path += folder_delimiter;
+    path += "7-Zip\\7z.exe";
+    return path;
+}
+
+static
+std::string
+get_download_tar_filename(const std::string& version)
+{
+    auto file = install;
+    file += folder_delimiter;
+    file += "tzdata";
+    file += version;
+    file += ".tar";
+    return file;
+}
+
+#endif  // _WIN32
+
+static
+bool
+extract_gz_file(const std::string& version, const std::string& gz_file,
+                const std::string& dest_folder)
+{
+#if _WIN32
+    auto tar_file = get_download_tar_filename(version);
     auto unzip_prog = get_unzip_program();
     bool unzip_result = false;
     // Use the unzip program to extract the tar file from the archive.
@@ -2263,10 +2025,10 @@ static bool extract_gz_file(const std::string& version, const std::string& gz_fi
     cmd = "\"" + cmd + "\"";
     if (std::system(cmd.c_str()) == EXIT_SUCCESS)
         unzip_result = true;
-#else
+#else  // !USE_SHELL_API
     if (run_program(cmd) == EXIT_SUCCESS)
         unzip_result = true;
-#endif
+#endif // !USE_SHELL_API
     delete_file(gz_file);
 
     // Use the unzip program extract the data from the tar file that was
@@ -2282,17 +2044,18 @@ static bool extract_gz_file(const std::string& version, const std::string& gz_fi
     cmd = "\"" + cmd + "\"";
     if (std::system(cmd.c_str()) == EXIT_SUCCESS)
         unzip_result = true;
-#else
+#else  // !USE_SHELL_API
     if (run_program(cmd) == EXIT_SUCCESS)
         unzip_result = true;
-#endif
+#endif // !USE_SHELL_API
 
     delete_file(tar_file);
     return unzip_result;
 
 #else //! _WIN32
+    auto tar_file = get_download_gz_filename(version);
     if (std::system(("tar -xzf " + tar_file + " -C " + install).c_str()) == EXIT_SUCCESS)
-    {        
+    {
         if (std::system(("rm " + tar_file).c_str()) == EXIT_SUCCESS)
             return true;
     }
@@ -2306,7 +2069,7 @@ remote_install(const std::string& version)
     auto success = false;
     assert(!version.empty());
 
-    auto gz_file = get_download_gz_file(version);
+    auto gz_file = get_download_gz_filename(version);
     if (file_exists(gz_file))
     {
         if (file_exists(install))
@@ -2317,7 +2080,7 @@ remote_install(const std::string& version)
                 success = true;
         }
 #if TIMEZONE_MAPPING
-        auto mapping_file_source = get_download_mapping_file(version);
+        auto mapping_file_source = get_download_mapping_filename(version);
         auto mapping_file_dest = install;
         mapping_file_dest += folder_delimiter;
         mapping_file_dest += "windowsZones.xml";
@@ -2327,6 +2090,7 @@ remote_install(const std::string& version)
     }
     return success;
 }
+
 #endif  // HAS_REMOTE_API
 
 static
@@ -2346,6 +2110,249 @@ get_version(const std::string& path)
     }
     throw std::runtime_error("Unable to get Timezone database version from " + path);
 }
+
+#if TIMEZONE_MAPPING
+
+namespace // Put types in an anonymous name space.
+{
+    // A simple type to manage RAII for key handles and to
+    // implement the trivial registry interface we need.
+    // Not intended to be general-purpose.
+    class reg_key
+    {
+    private:
+        // Note there is no value documented to be an invalid handle value.
+        // Not NULL nor INVALID_HANDLE_VALUE. We must rely on is_open.
+        HKEY m_key = nullptr;
+        bool m_is_open = false;
+    public:
+        HKEY handle()
+        {
+            return m_key;
+        }
+        bool is_open() const
+        {
+            return m_is_open;
+        }
+        LONG open(const wchar_t* key_name)
+        {
+            LONG result;
+            result = RegOpenKeyExW(HKEY_LOCAL_MACHINE, key_name, 0, KEY_READ, &m_key);
+            if (result == ERROR_SUCCESS)
+                m_is_open = true;
+            return result;
+        }
+        LONG close()
+        {
+            if (m_is_open)
+            {
+                auto result = RegCloseKey(m_key);
+                assert(result == ERROR_SUCCESS);
+                if (result == ERROR_SUCCESS)
+                {
+                    m_is_open = false;
+                    m_key = nullptr;
+                }
+                return result;
+            }
+            return ERROR_SUCCESS;
+        }
+
+        // WARNING: this function is not a general-purpose function.
+        // It has a hard-coded value size limit that should be sufficient for our use cases.
+        bool get_string(const wchar_t* key_name, std::string& value)
+        {
+            value.clear();
+            wchar_t value_buffer[256];
+            // in/out parameter. Documentation say that size is a count of bytes not chars.
+            DWORD size = sizeof(value_buffer) - sizeof(value_buffer[0]);
+            DWORD tzi_type = REG_SZ;
+            if (RegQueryValueExW(handle(), key_name, nullptr, &tzi_type,
+                reinterpret_cast<LPBYTE>(value_buffer), &size) == ERROR_SUCCESS)
+            {
+                // Function does not guarantee to null terminate.
+                value_buffer[size/sizeof(value_buffer[0])] = L'\0';
+                std::wstring_convert<std::codecvt_utf8_utf16<wchar_t>> converter;
+                value = converter.to_bytes(value_buffer);
+                return true;
+            }
+            return false;
+        }
+
+        bool get_binary(const wchar_t* key_name, void* value, int value_size)
+        {
+            DWORD size = value_size;
+            DWORD type = REG_BINARY;
+            if (RegQueryValueExW(handle(), key_name, nullptr, &type,
+                reinterpret_cast<LPBYTE>(value), &size) == ERROR_SUCCESS
+                && (int) size == value_size)
+                return true;
+            return false;
+        }
+
+        ~reg_key()
+        {
+            close();
+        }
+    };
+} // anonymous namespace
+
+// This routine maps Win32 OS error codes to readable text strngs.
+static
+std::string get_win32_message(DWORD error_code)
+{
+    struct free_message {
+        void operator()(char buf[]) {
+            if (buf != nullptr)
+            {
+                auto result = HeapFree(GetProcessHeap(), 0, buf);
+                assert(result != 0);
+            }
+        }
+    };
+    char* msg = nullptr;
+    auto result = FormatMessageA(
+        FORMAT_MESSAGE_ALLOCATE_BUFFER | FORMAT_MESSAGE_FROM_SYSTEM
+                                       | FORMAT_MESSAGE_IGNORE_INSERTS,
+        nullptr, error_code, MAKELANGID(LANG_NEUTRAL, SUBLANG_DEFAULT),
+        reinterpret_cast<char*>(&msg), 0, nullptr );
+    std::unique_ptr<char[], free_message> message_buffer(msg);
+    if (result == 0) // If there is no error message, still give the code.
+    {
+        std::string err = "Error getting message for error number ";
+        err += std::to_string(error_code);
+        return err;
+    }
+    assert(message_buffer.get() != nullptr);
+    return std::string(message_buffer.get());
+}
+
+static
+std::vector<date::detail::timezone_mapping>
+load_zone_mappings_from_xml_file(const std::string& input_path)
+{
+    using tinyxml2::XMLDocument;
+    std::vector<date::detail::timezone_mapping> zone_map_list;
+    XMLDocument doc;
+    doc.LoadFile(input_path.c_str());
+    auto supplementalData = doc.FirstChildElement("supplementalData");
+    auto windowsZones = supplementalData->FirstChildElement("windowsZones");
+    auto mapTimeZones = windowsZones->FirstChildElement("mapTimezones");
+
+    for (auto mapZone = mapTimeZones->FirstChildElement("mapZone");
+        mapZone != nullptr; mapZone = mapZone->NextSiblingElement())
+    {
+        auto other = mapZone->Attribute("other");
+        auto territory = mapZone->Attribute("territory");
+        auto type = mapZone->Attribute("type");
+        zone_map_list.emplace_back(other, territory, type);
+    }
+    return zone_map_list;
+}
+
+static
+void
+sort_zone_mappings(std::vector<date::detail::timezone_mapping>& mappings)
+{
+    std::sort(mappings.begin(), mappings.end(),
+        [](const auto& lhs, const auto& rhs)->bool
+    {
+        auto other_result = lhs.other.compare(rhs.other);
+        if (other_result < 0)
+            return true;
+        else if (other_result == 0)
+        {
+            auto territory_result = lhs.territory.compare(rhs.territory);
+            if (territory_result < 0)
+                return true;
+            else if (territory_result == 9)
+            {
+                if (lhs.type < rhs.type)
+                    return true;
+            }
+        }
+        return false;
+    });
+}
+
+// This function returns an exhaustive list of time zone information
+// from the Windows registry.
+// The routine tries to load as many time zone entries as possible despite errors.
+// We don't want to fail to load the whole database just because one record can't be read.
+
+static
+void
+get_windows_timezone_info(std::vector<detail::timezone_info>& tz_list)
+{
+    tz_list.clear();
+    LONG result;
+
+    // Open the parent time zone key that has the list of timezones in.
+    reg_key zones_key;
+    static const wchar_t zones_key_name[] =
+    { L"SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion\\Time Zones" };
+    result = zones_key.open(zones_key_name);
+    // TODO! Review if this should happen here or be signalled later.
+    // We don't want the process to fail on startup because of this.
+    if (result != ERROR_SUCCESS)
+        throw std::runtime_error("Time Zone registry key could not be opened: "
+        + get_win32_message(result));
+
+    DWORD size;
+    wchar_t zone_key_name[256];
+    std::wstring value;
+
+    // Iterate through the list of keys of the parent time zones key to get
+    // each key that identifies each individual timezone.
+    std::wstring full_zone_key_name;
+    for (DWORD zone_index = 0; ; ++zone_index)
+    {
+        detail::timezone_info tz;
+
+        size = (DWORD) sizeof(zone_key_name)/sizeof(zone_key_name[0]);
+        auto status = RegEnumKeyExW(zones_key.handle(), zone_index, zone_key_name, &size,
+            nullptr, nullptr, nullptr, nullptr);
+        if (status != ERROR_SUCCESS && status != ERROR_NO_MORE_ITEMS)
+            throw std::runtime_error("Can't enumerate time zone registry key"
+            + get_win32_message(status));
+        if (status == ERROR_NO_MORE_ITEMS)
+            break;
+        std::wstring_convert<std::codecvt_utf8_utf16<wchar_t>> converter;
+        tz.timezone_id = converter.to_bytes(zone_key_name);
+
+        full_zone_key_name = zones_key_name;
+        full_zone_key_name += L'\\';
+        full_zone_key_name += zone_key_name;
+
+        // If any field fails to be found, consider the whole time zone
+        // entry corrupt and move onto the next. See comments
+        // at the top of function.
+
+        reg_key zone_key;
+        if (zone_key.open(full_zone_key_name.c_str()) != ERROR_SUCCESS)
+            continue;
+
+        if (!zone_key.get_string(L"Std", tz.standard_name))
+            continue;
+
+#if 0
+        // TBD these fields are not required yet.
+        // They might be useful for test cases though.
+        if (!zone_key.get_string("Display", tz.display_name))
+            continue;
+
+        if (!zone_key.get_binary("TZI", &tz.tzi, sizeof(TZI)))
+            continue;
+#endif
+        zone_key.close();
+
+        tz_list.push_back(std::move(tz));
+    }
+    result = zones_key.close();
+}
+
+#endif  // TIMEZONE_MAPPING
+
 
 static
 TZ_DB
@@ -2528,25 +2535,6 @@ locate_zone(const std::string& tz_name)
     return &*zi;
 }
 
-#ifdef TZ_TEST
-#ifdef _WIN32
-const time_zone*
-locate_native_zone(const std::string& native_tz_name)
-{
-    std::string standard_tz_name;
-    if (!native_to_standard_timezone_name(native_tz_name, standard_tz_name))
-    {
-        std::string msg;
-        msg = "locate_native_zone() failed: A mapping from the Windows Time Zone id \"";
-        msg += native_tz_name;
-        msg += "\" was not found in the time zone mapping database.";
-        throw std::runtime_error(msg);
-    }
-    return locate_zone(standard_tz_name);
-}
-#endif
-#endif
-
 std::ostream&
 operator<<(std::ostream& os, const TZ_DB& db)
 {
@@ -2634,6 +2622,57 @@ operator<<(std::ostream& os, const local_info& r)
 }
 
 #ifdef _WIN32
+
+#if TIMEZONE_MAPPING
+
+// standard_name is the StandardName field from the Windows
+// TIME_ZONE_INFORMATION structure.
+// See the Windows API function GetTimeZoneInformation.
+// The standard_name is also the value from STD field of
+// under the windows registry key Time Zones.
+// To be clear, standard_name does NOT represent a windows timezone id
+// or an IANA tzid
+static
+const detail::timezone_info*
+find_native_timezone_by_standard_name(const std::string& standard_name)
+{
+    // TODO! we can improve on linear search.
+    const auto& native_zones = get_tzdb().native_zones;
+    for (const auto& tz : native_zones)
+    {
+        if (tz.standard_name == standard_name)
+            return &tz;
+    }
+
+    return nullptr;
+}
+
+static
+bool
+native_to_standard_timezone_name(const std::string& native_tz_name,
+                                 std::string& standard_tz_name)
+{
+    // TOOD! Need be a case insensitive compare?
+    if (native_tz_name == "UTC")
+    {
+        standard_tz_name = "Etc/UTC";
+        return true;
+    }
+    standard_tz_name.clear();
+    // TODO! we can improve on linear search.
+    const auto& mappings = date::get_tzdb().mappings;
+    for (const auto& tzm : mappings)
+    {
+        if (tzm.other == native_tz_name)
+        {
+            standard_tz_name = tzm.type;
+            return true;
+        }
+    }
+    return false;
+}
+
+#endif  // TIMEZONE_MAPPING
 
 const time_zone*
 current_zone()
@@ -2752,6 +2791,25 @@ current_zone()
     }
     throw std::runtime_error("Could not get current timezone");
 }
+#endif
+
+#ifdef TZ_TEST
+#ifdef _WIN32
+const time_zone*
+locate_native_zone(const std::string& native_tz_name)
+{
+    std::string standard_tz_name;
+    if (!native_to_standard_timezone_name(native_tz_name, standard_tz_name))
+    {
+        std::string msg;
+        msg = "locate_native_zone() failed: A mapping from the Windows Time Zone id \"";
+        msg += native_tz_name;
+        msg += "\" was not found in the time zone mapping database.";
+        throw std::runtime_error(msg);
+    }
+    return locate_zone(standard_tz_name);
+}
+#endif
 #endif
 
 }  // namespace date
