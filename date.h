@@ -3829,14 +3829,15 @@ class time_of_day
 {
     using base = detail::time_of_day_storage<Duration>;
 public:
-// MS cl compiler.
-#if _MSC_VER && ! defined(__clang__)
+#if !(_MSC_VER && !defined(__clang__))
+    // C++11
+    using base::base;
+#else
+    // MS cl compiler workaround.
     template <class ...Args>
     explicit time_of_day(Args&& ...args)
         : base(std::forward<Args>(args)...)
         {}
-#else
-    using base::base;
 #endif
 };
 
